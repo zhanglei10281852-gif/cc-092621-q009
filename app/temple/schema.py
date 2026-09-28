@@ -199,6 +199,111 @@ CREATE TABLE IF NOT EXISTS restoration_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_restoration_events_resource ON restoration_events(resource_type,resource_id,id);
+CREATE TABLE IF NOT EXISTS visit_slots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id) ON DELETE CASCADE,
+    slot_date TEXT NOT NULL,
+    slot_start TEXT NOT NULL,
+    slot_end TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','capacity_locked','closed')),
+    note TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(temple_id, slot_start, slot_end)
+);
+CREATE INDEX IF NOT EXISTS idx_visit_slots_date ON visit_slots(temple_id,slot_date);
+CREATE INDEX IF NOT EXISTS idx_visit_slots_window ON visit_slots(temple_id,slot_start,slot_end);
+CREATE TABLE IF NOT EXISTS visit_slot_capacities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slot_id INTEGER NOT NULL REFERENCES visit_slots(id) ON DELETE CASCADE,
+    hall_id INTEGER REFERENCES worship_halls(id) ON DELETE CASCADE,
+    hall_key INTEGER GENERATED ALWAYS AS (COALESCE(hall_id,-1)) STORED,
+    entrance_code TEXT NOT NULL DEFAULT '',
+    visitor_group TEXT NOT NULL DEFAULT '' CHECK(visitor_group IN ('','elder','ceremony','general')),
+    capacity INTEGER NOT NULL CHECK(capacity >= 0),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(slot_id,hall_key,entrance_code,visitor_group)
+);
+CREATE INDEX IF NOT EXISTS idx_visit_capacities_slot ON visit_slot_capacities(slot_id);
+CREATE TABLE IF NOT EXISTS capacity_releases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id) ON DELETE CASCADE,
+    slot_id INTEGER NOT NULL REFERENCES visit_slots(id) ON DELETE CASCADE,
+    release_kind TEXT NOT NULL CHECK(release_kind IN ('cancellation','confirmation_timeout','closure','capacity_adjustment')),
+    source_reservation_id INTEGER REFERENCES visit_reservations(id) ON DELETE SET NULL,
+    closure_window_id INTEGER REFERENCES hall_closure_windows(id) ON DELETE SET NULL,
+    hall_id INTEGER REFERENCES worship_halls(id) ON DELETE CASCADE,
+    entrance_code TEXT NOT NULL DEFAULT '',
+    visitor_group TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    reason TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_capacity_releases_slot ON capacity_releases(slot_id,id);
+CREATE TABLE IF NOT EXISTS visit_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id) ON DELETE CASCADE,
+    slot_id INTEGER NOT NULL REFERENCES visit_slots(id) ON DELETE CASCADE,
+    hall_id INTEGER NOT NULL REFERENCES worship_halls(id),
+    hall_key INTEGER GENERATED ALWAYS AS (hall_id) STORED,
+    entrance_code TEXT NOT NULL,
+    visitor_group TEXT NOT NULL CHECK(visitor_group IN ('elder','ceremony','general')),
+    visitor_hash TEXT NOT NULL,
+    party_size INTEGER NOT NULL DEFAULT 1 CHECK(party_size BETWEEN 1 AND 500),
+    contact TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('pending_confirmation','confirmed','waiting','cancelled','expired','declined')),
+    confirm_token TEXT NOT NULL UNIQUE,
+    confirm_deadline TEXT NOT NULL,
+    waitlist_rank INTEGER,
+    queued_at TEXT,
+    confirmed_at TEXT,
+    cancelled_at TEXT,
+    decided_at TEXT,
+    end_reason TEXT NOT NULL DEFAULT '',
+    request_id TEXT,
+    request_digest TEXT,
+    promoted_from_release_id INTEGER REFERENCES capacity_releases(id) ON DELETE SET NULL,
+    promotion_rule_code TEXT NOT NULL DEFAULT '',
+    promoted_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visit_request_id ON visit_reservations(request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_visit_reservations_occupancy ON visit_reservations(slot_id,status);
+CREATE INDEX IF NOT EXISTS idx_visit_reservations_waitlist ON visit_reservations(slot_id,hall_key,entrance_code,visitor_group,status,waitlist_rank);
+CREATE INDEX IF NOT EXISTS idx_visit_reservations_visitor ON visit_reservations(visitor_hash,status);
+CREATE TABLE IF NOT EXISTS waitlist_promotions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_id INTEGER NOT NULL UNIQUE REFERENCES visit_reservations(id) ON DELETE CASCADE,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id) ON DELETE CASCADE,
+    slot_id INTEGER NOT NULL REFERENCES visit_slots(id) ON DELETE CASCADE,
+    capacity_release_id INTEGER REFERENCES capacity_releases(id) ON DELETE SET NULL,
+    rule_code TEXT NOT NULL,
+    rule_label TEXT NOT NULL,
+    rank_before INTEGER NOT NULL,
+    queue_depth INTEGER NOT NULL,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_promotions_slot ON waitlist_promotions(slot_id,id);
+CREATE TABLE IF NOT EXISTS visit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type TEXT NOT NULL,
+    resource_id INTEGER NOT NULL,
+    reservation_id INTEGER REFERENCES visit_reservations(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visit_events_resource ON visit_events(resource_type,resource_id,id);
+CREATE INDEX IF NOT EXISTS idx_visit_events_reservation ON visit_events(reservation_id,id);
 '''
 
 
