@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.temple.booking_schemas import ClosureCapacityImpact
+
 
 class RolloutRestorationCampaignCreate(BaseModel):
     temple_code: str = Field(min_length=2, max_length=64)
@@ -50,3 +52,8 @@ class ClosureCreate(BaseModel):
 class ClosureAction(BaseModel):
     actor: str = Field(min_length=1, max_length=120)
     reason: str = Field(min_length=2, max_length=500)
+
+
+class ClosureImpactCreate(BaseModel):
+    actor: str = Field(min_length=1, max_length=120)
+    impacts: list[ClosureCapacityImpact] = Field(min_length=1, max_length=200)

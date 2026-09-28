@@ -199,6 +199,109 @@ CREATE TABLE IF NOT EXISTS restoration_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_restoration_events_resource ON restoration_events(resource_type,resource_id,id);
+CREATE TABLE IF NOT EXISTS visit_gates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(temple_id, code)
+);
+CREATE TABLE IF NOT EXISTS visit_segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    total_capacity INTEGER NOT NULL CHECK(total_capacity > 0),
+    confirm_timeout_seconds INTEGER NOT NULL DEFAULT 900 CHECK(confirm_timeout_seconds BETWEEN 60 AND 86400),
+    cohort_priority_json TEXT NOT NULL DEFAULT '{"elderly":10,"ceremony":20,"general":30}',
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','closed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(temple_id, code),
+    UNIQUE(temple_id, starts_at, ends_at)
+);
+CREATE INDEX IF NOT EXISTS idx_visit_segments_temple_time ON visit_segments(temple_id,starts_at,ends_at);
+CREATE TABLE IF NOT EXISTS visit_segment_quotas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id INTEGER NOT NULL REFERENCES visit_segments(id) ON DELETE CASCADE,
+    gate_id INTEGER REFERENCES visit_gates(id) ON DELETE CASCADE,
+    cohort TEXT CHECK(cohort IS NULL OR cohort IN ('elderly','ceremony','general')),
+    capacity INTEGER NOT NULL CHECK(capacity >= 0),
+    created_at TEXT NOT NULL,
+    UNIQUE(segment_id, gate_id, cohort)
+);
+CREATE TABLE IF NOT EXISTS visit_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_no TEXT NOT NULL UNIQUE,
+    temple_id INTEGER NOT NULL REFERENCES temple_sites(id),
+    segment_id INTEGER NOT NULL REFERENCES visit_segments(id),
+    gate_id INTEGER REFERENCES visit_gates(id),
+    identity_hash TEXT NOT NULL,
+    identity_label TEXT NOT NULL DEFAULT '',
+    cohort TEXT NOT NULL CHECK(cohort IN ('elderly','ceremony','general')),
+    party_size INTEGER NOT NULL DEFAULT 1 CHECK(party_size BETWEEN 1 AND 20),
+    state TEXT NOT NULL DEFAULT 'held' CHECK(state IN ('waiting','held','confirmed','cancelled','expired','declined')),
+    queue_seq INTEGER,
+    confirm_deadline TEXT,
+    confirmed_at TEXT,
+    cancelled_at TEXT,
+    end_reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_visit_res_segment_state ON visit_reservations(segment_id,state);
+CREATE INDEX IF NOT EXISTS idx_visit_res_identity ON visit_reservations(identity_hash);
+CREATE TABLE IF NOT EXISTS visit_capacity_holds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    closure_window_id INTEGER NOT NULL REFERENCES hall_closure_windows(id) ON DELETE CASCADE,
+    segment_id INTEGER NOT NULL REFERENCES visit_segments(id) ON DELETE CASCADE,
+    gate_id INTEGER REFERENCES visit_gates(id) ON DELETE CASCADE,
+    cohort TEXT CHECK(cohort IS NULL OR cohort IN ('elderly','ceremony','general')),
+    seats INTEGER NOT NULL CHECK(seats > 0),
+    state TEXT NOT NULL DEFAULT 'held' CHECK(state IN ('held','released')),
+    created_at TEXT NOT NULL,
+    released_at TEXT,
+    UNIQUE(closure_window_id, segment_id, gate_id, cohort)
+);
+CREATE INDEX IF NOT EXISTS idx_visit_holds_segment ON visit_capacity_holds(segment_id,state);
+CREATE TABLE IF NOT EXISTS visit_quota_releases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id INTEGER NOT NULL REFERENCES visit_segments(id) ON DELETE CASCADE,
+    gate_id INTEGER REFERENCES visit_gates(id),
+    cohort TEXT CHECK(cohort IS NULL OR cohort IN ('elderly','ceremony','general')),
+    seats INTEGER NOT NULL CHECK(seats > 0),
+    remaining_seats INTEGER NOT NULL CHECK(remaining_seats >= 0),
+    reason TEXT NOT NULL CHECK(reason IN ('cancelled','confirm_timeout','segment_purge','closure_released','admin_adjustment')),
+    source_reservation_id INTEGER REFERENCES visit_reservations(id),
+    closure_window_id INTEGER REFERENCES hall_closure_windows(id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visit_releases_segment ON visit_quota_releases(segment_id,id);
+CREATE TABLE IF NOT EXISTS visit_waitlist_promotions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id INTEGER NOT NULL REFERENCES visit_segments(id) ON DELETE CASCADE,
+    reservation_id INTEGER NOT NULL REFERENCES visit_reservations(id),
+    release_id INTEGER NOT NULL REFERENCES visit_quota_releases(id),
+    seats INTEGER NOT NULL CHECK(seats > 0),
+    rule_code TEXT NOT NULL CHECK(rule_code IN ('cohort_priority','gate_affinity','fifo')),
+    rule_detail_json TEXT NOT NULL DEFAULT '{}',
+    skipped_json TEXT NOT NULL DEFAULT '[]',
+    promoted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visit_promotions_segment ON visit_waitlist_promotions(segment_id,id);
+CREATE TABLE IF NOT EXISTS visit_reservation_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_id INTEGER NOT NULL REFERENCES visit_reservations(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visit_res_events ON visit_reservation_events(reservation_id,id);
 '''
 
 

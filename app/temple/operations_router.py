@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
+from app.temple.booking import TempleBookingService
 from app.temple.operations import TempleRestorationService
-from app.temple.operations_schemas import RestorationCampaignAction, ClosureAction, ClosureCreate, RolloutRestorationCampaignCreate
+from app.temple.operations_schemas import ClosureAction, ClosureCreate, ClosureImpactCreate, RolloutRestorationCampaignCreate, RestorationCampaignAction
 
 router = APIRouter(prefix="/api/temple/operations", tags=["修缮计划与殿堂封闭"])
 
@@ -50,6 +51,18 @@ def create_closure(payload: ClosureCreate):
 @router.get("/closure/{window_id}")
 def closure_detail(window_id: int):
     return service().closure_detail(window_id)
+
+
+@router.post("/closure/{window_id}/capacity-impacts", status_code=201)
+def add_closure_impacts(window_id: int, payload: ClosureImpactCreate):
+    """为封闭窗口登记对相关时段/入口/人群的容量收紧。"""
+    return TempleBookingService().add_closure_impacts(window_id, [item.model_dump() for item in payload.impacts], payload.actor)
+
+
+@router.post("/closure/{window_id}/cancel")
+def cancel_closure(window_id: int, payload: ClosureAction):
+    """取消封闭窗口：释放收紧名额并按规则递补候补。"""
+    return service().cancel_closure(window_id, payload.actor, payload.reason)
 
 
 @router.post("/closure/advance")

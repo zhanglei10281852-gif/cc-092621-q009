@@ -160,6 +160,8 @@ class TempleRestorationService:
         now = to_storage(self.clock.now())
         activated: list[int] = []
         completed: list[int] = []
+        released: list[dict[str, Any]] = []
+        promoted: list[dict[str, Any]] = []
         with transaction(immediate=True) as connection:
             due = connection.execute("SELECT * FROM hall_closure_windows WHERE state='scheduled' AND starts_at<=? ORDER BY id", (now,)).fetchall()
             for window in due:
@@ -171,7 +173,33 @@ class TempleRestorationService:
                 connection.execute("UPDATE hall_closure_windows SET state='completed',updated_at=? WHERE id=?", (now, window["id"]))
                 self._event(connection, "closure", window["id"], "completed", actor, {}, now)
                 completed.append(window["id"])
-        return {"activated": activated, "completed": completed}
+            if completed:
+                from app.temple.booking import TempleBookingService
+
+                booking = TempleBookingService(connection, self.clock)
+                for window_id in completed:
+                    window_releases, window_promotions = booking.release_window_holds(connection, window_id, actor, now)
+                    released.extend(window_releases)
+                    promoted.extend(window_promotions)
+        return {"activated": activated, "completed": completed, "releases": released, "promotions": promoted}
+
+    def cancel_closure(self, window_id: int, actor: str, reason: str) -> dict[str, Any]:
+        with transaction(immediate=True) as connection:
+            window = connection.execute("SELECT * FROM hall_closure_windows WHERE id=?", (window_id,)).fetchone()
+            if window is None:
+                raise NotFoundError("维护窗口不存在")
+            if window["state"] not in ("scheduled", "active"):
+                raise ConflictError("只有待生效或生效中的维护窗口可以取消")
+            now = to_storage(self.clock.now())
+            connection.execute("UPDATE hall_closure_windows SET state='cancelled',updated_at=? WHERE id=?", (now, window_id))
+            self._event(connection, "closure", window_id, "cancelled", actor, {"reason": reason}, now)
+            from app.temple.booking import TempleBookingService
+
+            releases, promotions = TempleBookingService(connection, self.clock).release_window_holds(connection, window_id, actor, now)
+            result = TempleRestorationService(connection, self.clock).closure_detail(window_id, connection)
+            result["releases"] = releases
+            result["promotions"] = promotions
+            return result
 
     def blocks_new_mitigation_session(self, temple_id: int, hall_id: int | None, now: str) -> dict[str, Any] | None:
         row = self.connection.execute(
